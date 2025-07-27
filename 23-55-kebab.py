@@ -57,6 +57,7 @@ class KalmanTracker:
         self.kfs.pop(oid, None); self.pred.pop(oid, None); self.lost.pop(oid, None)
 
     def update(self, detections: List[Tuple[int,int]]):
+        
         """Return dict id→(x,y) of *predicted* positions (post‑correction)."""
         # 1. Predict ahead
         for oid, kf in self.kfs.items():
@@ -246,6 +247,9 @@ def draw_ui(img, tracker: KalmanTracker, sx, sy, mid_px, top, bot, roi_rect: Tup
 #                                    Main
 # -----------------------------------------------------------------------------
 
+def nothing():
+    pass
+
 def main():
     args = make_parser().parse_args()
     if not 0<args.line_y<1: sys.exit("line_y must be in (0,1)")
@@ -265,6 +269,14 @@ def main():
     if not (0 <= roi_x < args.width and 0 <= roi_y < args.height):
         sys.exit("ROI origin outside frame")
 
+
+    # slidery
+    cv2.namedWindow("Ball Tracker", cv2.WINDOW_NORMAL)      # already exists, but
+
+    cv2.createTrackbar("min_r",   "Ball Tracker", args.min_r,   150, nothing)
+    cv2.createTrackbar("max_r",   "Ball Tracker", args.max_r,   200, nothing)
+    cv2.createTrackbar("hough_p2","Ball Tracker", args.hough_p2,100, nothing)
+
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 400)
 
@@ -273,6 +285,19 @@ def main():
 
     t0,fc=time.perf_counter(),0
     while True:
+
+        #slidery 
+        args.min_r   = cv2.getTrackbarPos("min_r",   "Ball Tracker") or 1
+        args.max_r   = cv2.getTrackbarPos("max_r",   "Ball Tracker") or 1
+        args.hough_p2= cv2.getTrackbarPos("hough_p2","Ball Tracker") or 1
+
+        if args.max_r < args.min_r:
+            args.max_r = args.min_r + 1
+            cv2.setTrackbarPos("max_r", "Ball Tracker", args.max_r)
+
+
+        # -------------------------------------------------------- zbytek 
+
         ret, frame = cap.read()
         if not ret: break
         proc = cv2.resize(frame,(args.width,args.height),cv2.INTER_AREA)
