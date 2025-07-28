@@ -277,6 +277,9 @@ def main():
     cv2.createTrackbar("max_r",   "Ball Tracker", args.max_r,   200, nothing)
     cv2.createTrackbar("hough_p2","Ball Tracker", args.hough_p2,100, nothing)
 
+    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
+
+
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 400)
 
