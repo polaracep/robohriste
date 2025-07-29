@@ -221,7 +221,8 @@ def detect_circles(frame, p):
 
     # Step 2: Extend edges by dilating the gray image (instead of blurring)
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    dilated = cv2.erode(gray, kernel, iterations=1)
+    # 
+    # dilated = cv2.erode(gray, kernel, iterations=1)
 
     # Step 3: Optional - add a light medianBlur (if really needed)
     # dilated = cv2.medianBlur(gray, 3)

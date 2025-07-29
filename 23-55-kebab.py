@@ -15,6 +15,19 @@ from typing import Dict, List, Tuple, Optional
 import cv2
 import numpy as np
 
+class Timer:
+
+    def __init__(self): 
+        self.start_time = 0
+
+    def restart_timer(self):
+        self.start_time = time.time()
+
+    def get_timer(self):
+        return time.time() - self.start_time
+
+
+
 # -----------------------------------------------------------------------------
 #                           Kalman‑based, mellow Tracker
 # -----------------------------------------------------------------------------
@@ -222,7 +235,7 @@ def detect_circles(frame, p):
 #                             Drawing helper
 # -----------------------------------------------------------------------------
 
-def draw_ui(img, tracker: KalmanTracker, sx, sy, mid_px, top, bot, roi_rect: Tuple[int,int,int,int], debug: bool):
+def draw_ui(img, tracker: KalmanTracker, sx, sy, mid_px, top, bot, timer, roi_rect: Tuple[int,int,int,int], debug: bool):
     h,w = img.shape[:2]
     cv2.line(img,(0,mid_px),(w-1,mid_px),(0,255,255),2)
 
@@ -240,6 +253,9 @@ def draw_ui(img, tracker: KalmanTracker, sx, sy, mid_px, top, bot, roi_rect: Tup
         cv2.putText(img,str(oid),(px-10,py-10),cv2.FONT_HERSHEY_SIMPLEX,0.5,(0,0,0),1)
     cv2.putText(img,f"Top: {top}",(10,40),cv2.FONT_HERSHEY_SIMPLEX,1,(255,0,0),2)
     cv2.putText(img,f"Bottom: {bot}",(10,h-20),cv2.FONT_HERSHEY_SIMPLEX,1,(0,0,255),2)
+
+    cv2.putText(img,f"{str(int(timer.get_timer()))}",(w-100,40),cv2.FONT_HERSHEY_SIMPLEX,1,(255,0,0),2)
+    cv2.putText(img,f"{str(int(timer.get_timer()))}",(w-100,h-20),cv2.FONT_HERSHEY_SIMPLEX,1,(0,0,255),2)
     if debug:
         cv2.putText(img,"DEBUG",(w-120,h-20),cv2.FONT_HERSHEY_SIMPLEX,0.7,(0,255,0),2)
 
@@ -287,7 +303,19 @@ def main():
     cap.set(cv2.CAP_PROP_EXPOSURE, 20)
 
     t0,fc=time.perf_counter(),0
+
+    timer = Timer()
+    timer.restart_timer()
+
     while True:
+        key = cv2.waitKey(1) & 0xFF
+        if key == 27 or key == ord('q'):  # ESC or 'q' to quit
+            break
+        elif key == 10 or key == 13:  # Enter
+            score_b = args.score_bottom
+            score_t = args.score_top
+        elif key == ord(' '):  # Space to pause/resume
+            timer.restart_timer()
 
         #slidery 
         args.min_r   = cv2.getTrackbarPos("min_r",   "Ball Tracker") or 1
@@ -334,7 +362,7 @@ def main():
         sx = frame.shape[1]/args.width
         sy = frame.shape[0]/args.height
         draw_ui(frame, tracker, sx, sy, int(frame.shape[0]*args.line_y),
-                score_t, score_b, (roi_x,roi_y,roi_w,roi_h), args.debug)
+                score_t, score_b, timer, (roi_x,roi_y,roi_w,roi_h), args.debug)
 
         fc+=1
         if fc>=30:
@@ -345,7 +373,6 @@ def main():
         cv2.imshow("Ball Tracker", frame)
         if args.debug and mask_full is not None:
             cv2.imshow("Mask", mask_full)
-        if cv2.waitKey(1) & 0xFF == ord('q'): break
 
     cap.release(); cv2.destroyAllWindows()
 
