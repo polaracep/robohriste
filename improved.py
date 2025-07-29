@@ -242,7 +242,7 @@ def detect_circles(frame, p):
 
 
     # ── NEW: non-max suppression so balls don’t overlap >50 % ──
-    if gray is None:
+    if cir is None:
         return [], mask
 
     cir = np.round(cir[0]).astype(int)              # (N,3) → ints
@@ -303,10 +303,11 @@ def draw_ui(img, tracker: KalmanTracker, sx, sy, mid_px, top, bot, roi_rect: Tup
 #                                    Main
 # -----------------------------------------------------------------------------
 
-def nothing():
+def nothing(no):
     pass
 
 def main():
+    global LOWER_BLUE, UPPER_BLUE
     args = make_parser().parse_args()
     if not 0<args.line_y<1: sys.exit("line_y must be in (0,1)")
     cap = cv2.VideoCapture(args.file if args.file else args.src)
@@ -405,7 +406,6 @@ def main():
         val_high = cv2.getTrackbarPos("val_high", "Controls")
         
         # Update color bounds
-        global LOWER_BLUE, UPPER_BLUE
         LOWER_BLUE = np.array([hue_low, sat_low, val_low])
         UPPER_BLUE = np.array([hue_high, sat_high, val_high])
         
