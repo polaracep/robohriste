@@ -265,7 +265,7 @@ def detect_circles(frame, p):
 #                             Drawing helper
 # -----------------------------------------------------------------------------
 
-def draw_ui(img, tracker: KalmanTracker, sx, sy, mid_px, b_top, b_bot, s_top, s_bot, timer: Timer, roi_rect: Tuple[int,int,int,int], debug: bool):
+def draw_ui(img, tracker: KalmanTracker, sx, sy, mid_px, b_top, b_bot, s_top, s_bot, pt_delta_top, timer: Timer, roi_rect: Tuple[int,int,int,int], debug: bool):
     h,w = img.shape[:2]
     cv2.line(img,(0,mid_px),(w-1,mid_px),(0,255,255),2)
 
@@ -297,8 +297,8 @@ def draw_ui(img, tracker: KalmanTracker, sx, sy, mid_px, b_top, b_bot, s_top, s_
     size = cv2.getTextSize(text, font, font_scale, font_thicc)
     cv2.putText(img,text,(w-10-size[0][0],h-20),font,font_scale,(0,0,255),font_thicc)
 
-    cv2.putText(img,f"Body: {s_top}",(10,40),cv2.FONT_HERSHEY_SIMPLEX,1,(255,0,0),2)
-    cv2.putText(img,f"Body: {s_bot}",(10,h-20),cv2.FONT_HERSHEY_SIMPLEX,1,(0,0,255),2)
+    cv2.putText(img,f"Body: {s_top}, (+{pt_delta_top})",(10,40),cv2.FONT_HERSHEY_SIMPLEX,1,(255,0,0),2)
+    cv2.putText(img,f"Body: {s_bot}, (+{24-pt_delta_top})",(10,h-20),cv2.FONT_HERSHEY_SIMPLEX,1,(0,0,255),2)
             
     size = cv2.getTextSize(time, font, font_scale, font_thicc)
 
@@ -364,6 +364,7 @@ def main():
     GameState.score_paused = False
 
     last_s = 0
+    pt_delta_top = 0
     
     while True:
         # -------------------------------------------------------- key handling
@@ -428,11 +429,12 @@ def main():
         # a second has passed, add the points
         if not int(timer.get_timer()) == int(last_s):
             last_s = int(timer.get_timer())
-            score_t += 24-balls_t
-            score_b += 24-balls_b
+            pt_delta_top = balls_b
+            score_t += balls_b
+            score_b += balls_t
 
         draw_ui(frame, tracker, sx, sy, int(frame.shape[0]*args.line_y),
-                balls_t, balls_b, score_t, score_b, timer, (roi_x,roi_y,roi_w,roi_h), args.debug)
+                balls_t, balls_b, score_t, score_b, pt_delta_top, timer, (roi_x,roi_y,roi_w,roi_h), args.debug)
 
         fc+=1
         fps = fc/(time.perf_counter()-t0); t0,fc=time.perf_counter(),0
