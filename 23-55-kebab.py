@@ -15,18 +15,48 @@ from typing import Dict, List, Tuple, Optional
 import cv2
 import numpy as np
 
+class GameState: 
+    score_paused = True
+
 class Timer:
-
-    def __init__(self): 
+    INTERVAL = 90
+    def __init__(self, elapsed_callback): 
+        self.callback = elapsed_callback
         self.start_time = 0
+        self.running = False
+        self.time_s = Timer.INTERVAL
 
-    def restart_timer(self):
+    def start_timer(self):
+        if self.time_s == Timer.INTERVAL:
+            self.start_time = time.time()
+        else: 
+            self.start_time = time.time() - Timer.INTERVAL + self.time_s
+        self.running = True
+    
+    def clear_timer(self):
         self.start_time = time.time()
+        self.time_s = Timer.INTERVAL
+
+    def stop_timer(self):
+        self.running = False
 
     def get_timer(self):
-        return time.time() - self.start_time
+        if self.running:
+            self.time_s = self.start_time + Timer.INTERVAL - time.time()
+            if self.time_s <= 0 and self.running:
+                self.time_s = 0
+                self.stop_timer()
+                self.callback()
+                return 0
+
+        return self.time_s
 
 
+
+def seconds_to_mmss(seconds):
+    minutes = seconds // 60
+    remaining_seconds = seconds % 60
+    return f"{int(minutes):02}:{int(remaining_seconds):02}"
 
 # -----------------------------------------------------------------------------
 #                           Kalman‑based, mellow Tracker
@@ -235,7 +265,7 @@ def detect_circles(frame, p):
 #                             Drawing helper
 # -----------------------------------------------------------------------------
 
-def draw_ui(img, tracker: KalmanTracker, sx, sy, mid_px, top, bot, timer, roi_rect: Tuple[int,int,int,int], debug: bool):
+def draw_ui(img, tracker: KalmanTracker, sx, sy, mid_px, b_top, b_bot, s_top, s_bot, timer: Timer, roi_rect: Tuple[int,int,int,int], debug: bool):
     h,w = img.shape[:2]
     cv2.line(img,(0,mid_px),(w-1,mid_px),(0,255,255),2)
 
@@ -251,13 +281,38 @@ def draw_ui(img, tracker: KalmanTracker, sx, sy, mid_px, top, bot, timer, roi_re
         px,py = int(cx*sx), int(cy*sy)
         cv2.circle(img,(px,py),12,(0,0,255),2)
         cv2.putText(img,str(oid),(px-10,py-10),cv2.FONT_HERSHEY_SIMPLEX,0.5,(0,0,0),1)
-    cv2.putText(img,f"Top: {top}",(10,40),cv2.FONT_HERSHEY_SIMPLEX,1,(255,0,0),2)
-    cv2.putText(img,f"Bottom: {bot}",(10,h-20),cv2.FONT_HERSHEY_SIMPLEX,1,(0,0,255),2)
+        
+    
+    time = seconds_to_mmss(timer.get_timer())
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 1
+    font_thicc = 2
 
-    cv2.putText(img,f"{str(int(timer.get_timer()))}",(w-100,40),cv2.FONT_HERSHEY_SIMPLEX,1,(255,0,0),2)
-    cv2.putText(img,f"{str(int(timer.get_timer()))}",(w-100,h-20),cv2.FONT_HERSHEY_SIMPLEX,1,(0,0,255),2)
+
+    text= f"Kryptokoule: {b_top}"
+    size = cv2.getTextSize(text, font, font_scale, font_thicc)
+    cv2.putText(img,text,(w-10-size[0][0],40),font,font_scale,(255,0,0),font_thicc)
+
+    text= f"Kryptokoule: {b_bot}"
+    size = cv2.getTextSize(text, font, font_scale, font_thicc)
+    cv2.putText(img,text,(w-10-size[0][0],h-20),font,font_scale,(0,0,255),font_thicc)
+
+    cv2.putText(img,f"Body: {s_top}",(10,40),cv2.FONT_HERSHEY_SIMPLEX,1,(255,0,0),2)
+    cv2.putText(img,f"Body: {s_bot}",(10,h-20),cv2.FONT_HERSHEY_SIMPLEX,1,(0,0,255),2)
+            
+    size = cv2.getTextSize(time, font, font_scale, font_thicc)
+
+    cv2.putText(img,f"{time}",((w-size[0][0])//2,40),font,font_scale,(255,0,0),font_thicc)
+
+    #cv2.putText(img,f"{seconds_to_mmss(timer.get_timer())}",(w-100,h-20),cv2.FONT_HERSHEY_SIMPLEX,1,(0,0,255),2)
     if debug:
         cv2.putText(img,"DEBUG",(w-120,h-20),cv2.FONT_HERSHEY_SIMPLEX,0.7,(0,255,0),2)
+    
+    if not timer.running:
+        center_x = (w//2)
+        center_y = (h//2)
+        cv2.line(img, (center_x - 30, center_y - 60), (center_x - 30, center_y + 60), (0, 0, 255), 20)
+        cv2.line(img, (center_x + 30, center_y - 60), (center_x + 30, center_y + 60), (0, 0, 255), 20)
 
 # -----------------------------------------------------------------------------
 #                                    Main
@@ -265,6 +320,9 @@ def draw_ui(img, tracker: KalmanTracker, sx, sy, mid_px, top, bot, timer, roi_re
 
 def nothing():
     pass
+
+def pause_game():
+    GameState.score_paused = True
 
 def main():
     args = make_parser().parse_args()
@@ -274,7 +332,8 @@ def main():
 
     tracker = KalmanTracker(args.ghost_frames, args.max_dist, args.kf_q, args.kf_r)
     mid_y_proc = int(args.height*args.line_y); BUFFER=3
-    score_t, score_b = args.score_top, args.score_bottom
+    balls_t, balls_b = args.score_top, args.score_bottom
+    score_t, score_b = 0, 0
     last_y: Dict[int,int]={}
 
     # ROI defaults to full processed frame if not provided
@@ -289,12 +348,7 @@ def main():
     # slidery
     cv2.namedWindow("Ball Tracker", cv2.WINDOW_NORMAL)      # already exists, but
 
-    cv2.createTrackbar("min_r",   "Ball Tracker", args.min_r,   150, nothing)
-    cv2.createTrackbar("max_r",   "Ball Tracker", args.max_r,   200, nothing)
-    cv2.createTrackbar("hough_p2","Ball Tracker", args.hough_p2,100, nothing)
-
     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
-
 
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 400)
@@ -304,28 +358,33 @@ def main():
 
     t0,fc=time.perf_counter(),0
 
-    timer = Timer()
-    timer.restart_timer()
+    timer = Timer(pause_game)
+    timer.start_timer()
 
+    GameState.score_paused = False
+
+    last_s = 0
+    
     while True:
+        # -------------------------------------------------------- key handling
         key = cv2.waitKey(1) & 0xFF
         if key == 27 or key == ord('q'):  # ESC or 'q' to quit
             break
-        elif key == 10 or key == 13:  # Enter
-            score_b = args.score_bottom
-            score_t = args.score_top
         elif key == ord(' '):  # Space to pause/resume
-            timer.restart_timer()
-
-        #slidery 
-        args.min_r   = cv2.getTrackbarPos("min_r",   "Ball Tracker") or 1
-        args.max_r   = cv2.getTrackbarPos("max_r",   "Ball Tracker") or 1
-        args.hough_p2= cv2.getTrackbarPos("hough_p2","Ball Tracker") or 1
-
-        if args.max_r < args.min_r:
-            args.max_r = args.min_r + 1
-            cv2.setTrackbarPos("max_r", "Ball Tracker", args.max_r)
-
+            if timer.running: 
+                timer.stop_timer()
+                GameState.score_paused = True
+            else:
+                timer.start_timer()
+                GameState.score_paused = False
+        elif key == 10 or key == 13:  # Enter to restart
+            timer.stop_timer()
+            GameState.score_paused = True
+            timer.clear_timer()
+            balls_b = args.score_bottom
+            balls_t = args.score_top
+            score_b = -12
+            score_t = -12
 
         # -------------------------------------------------------- zbytek 
 
@@ -342,6 +401,7 @@ def main():
         if args.debug:
             mask_full = np.zeros(proc.shape[:2], dtype=np.uint8)
             mask_full[roi_y:roi_y+roi_h, roi_x:roi_x+roi_w] = mask_roi
+
         # ----------------------------------------------------------------------
 
         tracker.update(dets)
@@ -350,25 +410,36 @@ def main():
         for oid,(cx,cy) in tracker.pred.items():
             if not tracker.is_visible(oid): continue
             prev = last_y.get(oid)
-            if prev is not None:
-                if prev < mid_y_proc-BUFFER <= cy:
-                    score_t -= 1; score_b += 1
-                elif prev > mid_y_proc+BUFFER >= cy:
-                    score_t += 1; score_b -= 1
-            last_y[oid] = cy
+            if GameState.score_paused == False:
+                if prev is not None:
+                    if prev < mid_y_proc-BUFFER <= cy:
+                        balls_t -= 1; balls_b += 1
+                    elif prev > mid_y_proc+BUFFER >= cy:
+                        balls_t += 1; balls_b -= 1
+                last_y[oid] = cy
         for oid in list(last_y):
             if oid not in tracker.pred or not tracker.is_visible(oid): last_y.pop(oid)
 
+        # -------------------------------------------------------------- UI Rendering
+
         sx = frame.shape[1]/args.width
         sy = frame.shape[0]/args.height
+
+        # a second has passed, add the points
+        if not int(timer.get_timer()) == int(last_s):
+            last_s = int(timer.get_timer())
+            score_t += 24-balls_t
+            score_b += 24-balls_b
+
         draw_ui(frame, tracker, sx, sy, int(frame.shape[0]*args.line_y),
-                score_t, score_b, timer, (roi_x,roi_y,roi_w,roi_h), args.debug)
+                balls_t, balls_b, score_t, score_b, timer, (roi_x,roi_y,roi_w,roi_h), args.debug)
 
         fc+=1
-        if fc>=30:
-            fps = fc/(time.perf_counter()-t0); t0,fc=time.perf_counter(),0
-            cv2.putText(frame,f"FPS:{fps:.1f}",(frame.shape[1]-200,40),
-                        cv2.FONT_HERSHEY_SIMPLEX,1,(50,50,50),2)
+        fps = fc/(time.perf_counter()-t0); t0,fc=time.perf_counter(),0
+        fps_text = f"FPS:{fps:.1f}"
+        size = cv2.getTextSize(fps_text, cv2.FONT_HERSHEY_SIMPLEX, 0.3, 1)
+        cv2.putText(frame,fps_text,((frame.shape[1]-size[0][0])//2,frame.shape[0] - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX,0.3,(0xff,0xff,0xff),1)
 
         cv2.imshow("Ball Tracker", frame)
         if args.debug and mask_full is not None:
