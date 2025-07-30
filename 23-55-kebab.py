@@ -370,14 +370,14 @@ def main():
         key = cv2.waitKey(1) & 0xFF
         if key == 27 or key == ord('q'):  # ESC or 'q' to quit
             break
-        elif key == ord(' '):  # Space to pause/resume
+        elif key == 10 or key == 13:  # Enter to restart
             if timer.running: 
                 timer.stop_timer()
                 GameState.score_paused = True
             else:
                 timer.start_timer()
                 GameState.score_paused = False
-        elif key == 10 or key == 13:  # Enter to restart
+        elif key == ord(' '):  # Space to pause/resume
             timer.stop_timer()
             GameState.score_paused = True
             timer.clear_timer()
