@@ -51,8 +51,6 @@ class Timer:
 
         return self.time_s
 
-
-
 def seconds_to_mmss(seconds):
     minutes = seconds // 60
     remaining_seconds = seconds % 60
@@ -69,88 +67,114 @@ class KalmanTracker:
         ghost_frames: int = 10,          # frames to keep an unmatched track
         max_dist: int = 120,             # gating radius (proc px)
         q: float = 5e-4,                 # process‑noise scalar (lower = calmer)
-        r: float = 5e-2                  # measurement‑noise scalar (lower = trust detections)
+        r: float = 5e-2,                 # measurement‑noise scalar (lower = trust detections)
+        max_ids: int = 100               # number of IDs to cycle through
     ):
+        # ID allocation and recycling
         self.next_id = 0
+        self.max_ids = max_ids          # recycle IDs in range [0, max_ids)
+
+        # Kalman storage
         self.kfs: Dict[int, cv2.KalmanFilter] = OrderedDict()
         self.pred: Dict[int, Tuple[int, int]] = OrderedDict()
         self.lost: Dict[int, int] = OrderedDict()
-        self.ghost_frames = ghost_frames
-        self.max_dist = max_dist
-        self.q = q; self.r = r
 
-    # ---------------- Kalman helpers ---------------- #
-    def _new_kf(self, x: float, y: float):
+        # Tracking parameters
+        self.ghost_frames = ghost_frames
+        self.max_dist    = max_dist
+        self.q           = q
+        self.r           = r
+
+        # Timer initialization (optional, define INTERVAL if needed)
+        # If you don't use timing, you can remove or adjust this.
+        # self.running = False
+        # self.time_s  = Timer.INTERVAL
+
+    def _new_kf(self, x: int, y: int) -> cv2.KalmanFilter:
+        """Create and initialize a Kalman filter for a new object."""
         kf = cv2.KalmanFilter(4, 2)
-        kf.transitionMatrix = np.array([[1,0,1,0],[0,1,0,1],[0,0,1,0],[0,0,0,1]], np.float32)
-        kf.measurementMatrix = np.eye(2,4, dtype=np.float32)
-        kf.processNoiseCov      = self.q * np.eye(4, dtype=np.float32)
-        kf.measurementNoiseCov  = self.r * np.eye(2, dtype=np.float32)
-        kf.errorCovPost         = np.eye(4, dtype=np.float32)
-        kf.statePost            = np.array([[x],[y],[0],[0]], np.float32)
+        kf.transitionMatrix = np.array([[1, 0, 1, 0],
+                                        [0, 1, 0, 1],
+                                        [0, 0, 1, 0],
+                                        [0, 0, 0, 1]], np.float32)
+        kf.measurementMatrix = np.eye(2, 4, dtype=np.float32)
+        kf.processNoiseCov = np.eye(4, dtype=np.float32) * self.q
+        kf.measurementNoiseCov = np.eye(2, dtype=np.float32) * self.r
+        kf.errorCovPost = np.eye(4, dtype=np.float32)
+        kf.statePost = np.array([[x], [y], [0], [0]], np.float32)
         return kf
 
-    def _register(self, pt: Tuple[int,int]):
-        self.kfs[self.next_id] = self._new_kf(*pt)
-        self.pred[self.next_id] = pt
-        self.lost[self.next_id] = 0
-        self.next_id += 1
+    def _register(self, pt: Tuple[int, int]):
+        """Assign the next free ID (recycled modulo max_ids) to a new detection."""
+        for _ in range(self.max_ids):
+            oid = self.next_id
+            self.next_id = (self.next_id + 1) % self.max_ids
+            if oid not in self.kfs:
+                # found an unused ID
+                self.kfs[oid]  = self._new_kf(*pt)
+                self.pred[oid] = pt
+                self.lost[oid] = 0
+                return
+        # no ID free
+        raise RuntimeError(f"No available IDs to assign (all {self.max_ids} in use)")
 
     def _deregister(self, oid: int):
-        self.kfs.pop(oid, None); self.pred.pop(oid, None); self.lost.pop(oid, None)
+        """Remove a track and free its ID."""
+        if oid in self.kfs:
+            del self.kfs[oid]
+            del self.pred[oid]
+            del self.lost[oid]
 
-    def update(self, detections: List[Tuple[int,int]]):
-        
-        """Return dict id→(x,y) of *predicted* positions (post‑correction)."""
-        # 1. Predict ahead
-        for oid, kf in self.kfs.items():
-            p = kf.predict(); self.pred[oid] = (int(p[0]), int(p[1]))
+    def update(self, detections: List[Tuple[int, int]]) -> List[Tuple[int, int, int]]:
+        """Match detections to existing tracks or register new ones; return list of (x, y, id)."""
+        # Predict existing tracks
+        for oid, kf in list(self.kfs.items()):
+            pred = kf.predict()
+            self.pred[oid] = (int(pred[0]), int(pred[1]))
 
-        ids   = list(self.kfs.keys())
-        predC = np.array(list(self.pred.values())) if ids else np.empty((0,2))
-        detC  = np.array(detections)
+        # Build distance matrix
+        ids = list(self.kfs.keys())
+        predC = np.array(list(self.pred.values())) if ids else np.empty((0, 2))
+        detC  = np.array(detections)       if detections else np.empty((0, 2))
+        if predC.size and detC.size:
+            D = np.linalg.norm(predC[:, None] - detC[None, :], axis=2)
+        else:
+            D = np.empty((0, 0))
 
-        # 2. Handle no detections
-        if detC.size == 0:
-            for oid in list(self.lost):
-                self.lost[oid] += 1
-                if self.lost[oid] > self.ghost_frames:
-                    self._deregister(oid)
-            return self.pred
-
-        # 3. First frame
-        if predC.size == 0:
-            for pt in detections: self._register(pt)
-            return self.pred
-
-        # 4. Distance matrix on predictions
-        D = np.linalg.norm(predC[:,None] - detC[None,:], axis=2)
-        used_r, used_c = set(), set()
-        while True:
-            if np.isinf(D).all(): break
-            r,c = divmod(D.argmin(), D.shape[1])
-            if D[r,c] > self.max_dist: break
-            if r in used_r or c in used_c: D[r,c]=np.inf; continue
+        matches = []
+        used_d  = set()
+        # Greedy match loop
+        while D.size and D.min() <= self.max_dist:
+            idx = np.argmin(D)
+            r, c = divmod(idx, D.shape[1])
             oid = ids[r]
-            meas = np.array([[detC[c,0]],[detC[c,1]]], np.float32)
+            if c in used_d:
+                D[r, c] = np.inf
+                continue
+            # Correct the filter
+            meas = np.array([[detections[c][0]], [detections[c][1]]], np.float32)
             self.kfs[oid].correct(meas)
-            self.pred[oid] = tuple(detC[c])
+            self.pred[oid] = detections[c]
             self.lost[oid] = 0
-            used_r.add(r); used_c.add(c)
-            D[r,:]=np.inf; D[:,c]=np.inf
+            matches.append((oid, detections[c]))
+            used_d.add(c)
+            D[r, :] = np.inf
+            D[:, c] = np.inf
 
-        # 5. unmatched tracks
-        for r, oid in enumerate(ids):
-            if r not in used_r:
+        # Handle unmatched tracks
+        for oid in list(self.kfs.keys()):
+            if oid not in [m[0] for m in matches]:
                 self.lost[oid] += 1
                 if self.lost[oid] > self.ghost_frames:
                     self._deregister(oid)
+        # Register unmatched detections
+        for i, det in enumerate(detections):
+            if i not in used_d:
+                self._register(det)
 
-        # 6. unmatched detections
-        for c, pt in enumerate(detections):
-            if c not in used_c: self._register(pt)
+        # Return active tracks
+        return [(x, y, oid) for oid, (x, y) in self.pred.items()]
 
-        return self.pred
 
     def is_visible(self, oid: int) -> bool:
         return self.lost.get(oid, 1) == 0
@@ -384,8 +408,14 @@ def main():
             timer.clear_timer()
             balls_b = args.score_bottom
             balls_t = args.score_top
-            score_b = -12
-            score_t = -12
+            score_b = 0
+            score_t = 0
+        elif key == ord('w'):
+            balls_t += 1
+            balls_b -= 1
+        elif key == ord('s'):
+            balls_t -= 1
+            balls_b += 1
 
         # -------------------------------------------------------- zbytek 
 
